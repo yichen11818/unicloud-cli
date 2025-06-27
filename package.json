@@ -1,0 +1,125 @@
+{
+  "name": "unicloud-cli",
+  "displayName": "unicloud cli",
+  "description": "unicloud cli工具 vscode中实现云函数的上传删除 修改等",
+  "version": "0.0.1",
+  "engines": {
+    "vscode": "^1.101.0"
+  },
+  "categories": [
+    "Other"
+  ],
+  "activationEvents": [],
+  "main": "./extension.js",
+  "contributes": {
+    "configuration": {
+      "title": "UniCloud CLI",
+      "properties": {
+        "unicloud-cli.cliPath": {
+          "type": "string",
+          "default": "C:\\Program Files\\HBuilderX\\cli.exe",
+          "description": "HBuilderX CLI 工具的路径"
+        }
+      }
+    },
+    "commands": [
+      {
+        "command": "unicloud-cli.helloWorld",
+        "title": "UniCloud: Hello World"
+      },
+      {
+        "command": "unicloud-cli.uploadCloudFunction",
+        "title": "UniCloud: 上传资源"
+      },
+      {
+        "command": "unicloud-cli.downloadCloudFunction",
+        "title": "UniCloud: 下载资源"
+      },
+      {
+        "command": "unicloud-cli.listResources",
+        "title": "UniCloud: 列举资源信息"
+      },
+      {
+        "command": "unicloud-cli.initDatabase",
+        "title": "UniCloud: 初始化数据库"
+      },
+      {
+        "command": "unicloud-cli.assignSpace",
+        "title": "UniCloud: 指定云空间"
+      },
+      {
+        "command": "unicloud-cli.linkFolderToSpace",
+        "title": "UniCloud: 关联文件夹到云空间"
+      },
+      {
+        "command": "unicloud-cli.configureCLIPath",
+        "title": "UniCloud: 配置 CLI 路径"
+      }
+    ],
+    "menus": {
+      "explorer/context": [
+        {
+          "when": "explorerResourceIsFolder",
+          "command": "unicloud-cli.uploadCloudFunction",
+          "group": "unicloud"
+        },
+        {
+          "when": "explorerResourceIsFolder",
+          "command": "unicloud-cli.downloadCloudFunction",
+          "group": "unicloud"
+        },
+        {
+          "when": "explorerResourceIsFolder",
+          "command": "unicloud-cli.linkFolderToSpace",
+          "group": "unicloud"
+        }
+      ],
+      "commandPalette": [
+        {
+          "command": "unicloud-cli.uploadCloudFunction",
+          "group": "unicloud"
+        },
+        {
+          "command": "unicloud-cli.downloadCloudFunction",
+          "group": "unicloud"
+        },
+        {
+          "command": "unicloud-cli.listResources",
+          "group": "unicloud"
+        },
+        {
+          "command": "unicloud-cli.initDatabase",
+          "group": "unicloud"
+        },
+        {
+          "command": "unicloud-cli.assignSpace",
+          "group": "unicloud"
+        },
+        {
+          "command": "unicloud-cli.linkFolderToSpace",
+          "group": "unicloud"
+        },
+        {
+          "command": "unicloud-cli.configureCLIPath",
+          "group": "unicloud"
+        }
+      ]
+    }
+  },
+  "scripts": {
+    "lint": "eslint .",
+    "pretest": "npm run lint",
+    "test": "vscode-test"
+  },
+  "devDependencies": {
+    "@types/vscode": "^1.101.0",
+    "@types/mocha": "^10.0.10",
+    "@types/node": "20.x",
+    "eslint": "^9.25.1",
+    "@vscode/test-cli": "^0.0.10",
+    "@vscode/test-electron": "^2.5.2"
+  },
+  "dependencies": {
+    "iconv-lite": "^0.6.3"
+  }
+}
