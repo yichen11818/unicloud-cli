@@ -8,6 +8,112 @@ const util = require('util');
 const execPromise = util.promisify(exec);
 const iconv = require('iconv-lite'); // 注意：需要安装这个包
 
+// 关联的云空间文件夹路径列表
+let associatedCloudFolders = [];
+
+// 文件装饰提供器，用于修改文件图标
+class CloudSpaceDecorationProvider {
+	constructor() {
+		this._onDidChangeFileDecorations = new vscode.EventEmitter();
+		this.onDidChangeFileDecorations = this._onDidChangeFileDecorations.event;
+	}
+
+	provideFileDecoration(uri) {
+		// 检查是否是已关联的云空间文件夹
+		if (this.isAssociatedCloudFolder(uri.fsPath)) {
+			// 返回装饰，使用特殊图标和徽章
+			return {
+				badge: '✓', // 使用勾选符号作为徽章
+				color: new vscode.ThemeColor('charts.blue'), // 使用蓝色
+				tooltip: '已关联云空间'
+			};
+		}
+		return null;
+	}
+
+	isAssociatedCloudFolder(filePath) {
+		return associatedCloudFolders.some(folder => 
+			folder.toLowerCase() === filePath.toLowerCase());
+	}
+
+	// 更新装饰
+	updateDecorations() {
+		this._onDidChangeFileDecorations.fire(undefined); // 触发更新所有装饰
+	}
+}
+
+// 云空间树视图提供器
+class CloudSpaceTreeDataProvider {
+	constructor() {
+		this._onDidChangeTreeData = new vscode.EventEmitter();
+		this.onDidChangeTreeData = this._onDidChangeTreeData.event;
+	}
+
+	refresh() {
+		this._onDidChangeTreeData.fire(undefined);
+	}
+
+	getTreeItem(element) {
+		const uri = vscode.Uri.file(element);
+		const treeItem = new vscode.TreeItem(
+			uri,
+			vscode.TreeItemCollapsibleState.Collapsed
+		);
+		
+		// 设置标签为文件夹名称
+		treeItem.label = path.basename(element);
+		
+		// 设置图标
+		treeItem.iconPath = new vscode.ThemeIcon('cloud');
+		
+		// 设置上下文菜单
+		treeItem.contextValue = 'cloudSpaceFolder';
+		
+		// 设置工具提示
+		const provider = this.getProviderFromPath(element);
+		if (provider) {
+			treeItem.tooltip = `已关联的${provider.label}云空间`;
+			// 设置描述
+			treeItem.description = provider.label;
+		} else {
+			treeItem.tooltip = '已关联的云空间';
+		}
+		
+		// 设置命令，点击时打开文件夹
+		treeItem.command = {
+			command: 'revealInExplorer',
+			title: '在资源管理器中显示',
+			arguments: [uri]
+		};
+		
+		return treeItem;
+	}
+
+	getChildren(element) {
+		if (element) {
+			// 如果提供了元素，则返回该文件夹的子项
+			// 这里我们不显示子项，所以返回空数组
+			return [];
+		} else {
+			// 返回顶级项 - 关联的云空间文件夹
+			return associatedCloudFolders;
+		}
+	}
+	
+	// 从路径获取云服务商信息
+	getProviderFromPath(filePath) {
+		const folderName = path.basename(filePath);
+		if (folderName === 'uniCloud-aliyun') {
+			return { id: 'aliyun', label: '阿里云' };
+		} else if (folderName === 'uniCloud-tcb') {
+			return { id: 'tcb', label: '腾讯云' };
+		} else if (folderName === 'uniCloud-alipay') {
+			return { id: 'alipay', label: '支付宝' };
+		}
+		return null;
+	}
+}
+
 /**
  * 扩展 QuickPickItem 的自定义类型，添加 id 字段和其他可能需要的自定义属性
  * @typedef {Object} CustomQuickPickItem
@@ -22,6 +128,18 @@ const iconv = require('iconv-lite'); // 注意：需要安装这个包
 function getCLIPath() {
 	const config = vscode.workspace.getConfiguration('unicloud-cli');
 	return config.get('cliPath');
+}
+
+// 获取云空间配置
+function getSpaceConfig(provider) {
+	const config = vscode.workspace.getConfiguration('unicloud-cli');
+	const spaceAssociations = config.get('spaceAssociations') || {};
+	
+	if (provider) {
+		return spaceAssociations[provider] || null;
+	}
+	
+	return spaceAssociations;
 }
 
 // 格式化CLI路径，处理空格和引号
@@ -75,6 +193,41 @@ function activate(context) {
 	// Use the console to output diagnostic information (console.log) and errors (console.error)
 	// This line of code will only be executed once when your extension is activated
 	log('扩展 "unicloud-cli" 已激活!', true);
+	
+	// 初始化文件装饰提供器
+	const cloudSpaceDecorationProvider = new CloudSpaceDecorationProvider();
+	context.subscriptions.push(
+		vscode.window.registerFileDecorationProvider(cloudSpaceDecorationProvider)
+	);
+	
+	// 初始化树视图提供器
+	const cloudSpaceTreeDataProvider = new CloudSpaceTreeDataProvider();
+	const treeView = vscode.window.createTreeView('uniCloudSpaces', {
+		treeDataProvider: cloudSpaceTreeDataProvider,
+		showCollapseAll: true
+	});
+	context.subscriptions.push(treeView);
+	
+	// 注册在资源管理器中显示文件的命令
+	context.subscriptions.push(
+		vscode.commands.registerCommand('revealInExplorer', (uri) => {
+			vscode.commands.executeCommand('revealInExplorer', uri);
+		})
+	);
+	
+	// 加载已关联的云空间文件夹
+	loadAssociatedCloudFolders();
+	
+	// 监听配置变化，更新关联的云空间文件夹
+	context.subscriptions.push(
+		vscode.workspace.onDidChangeConfiguration(e => {
+			if (e.affectsConfiguration('unicloud-cli.spaceAssociations')) {
+				loadAssociatedCloudFolders();
+				cloudSpaceDecorationProvider.updateDecorations();
+				cloudSpaceTreeDataProvider.refresh();
+			}
+		})
+	);
 	
 	// 检查CLI路径是否有效
 	async function checkCLIPath() {
@@ -162,6 +315,7 @@ function activate(context) {
 		const possiblePaths = [
 			path.join(workspacePath, 'uniCloud-aliyun', 'cloudfunctions'),
 			path.join(workspacePath, 'uniCloud-tcb', 'cloudfunctions'),
+			path.join(workspacePath, 'uniCloud-alipay', 'cloudfunctions'),
 			path.join(workspacePath, 'cloudfunctions')
 		];
 
@@ -321,6 +475,66 @@ function activate(context) {
 		}
 	}
 
+	// 获取或选择云服务商
+	async function getOrSelectProvider() {
+		// 先从工作区设置中读取已关联的云服务商列表
+		const spaceConfig = getSpaceConfig();
+		const providers = Object.keys(spaceConfig);
+		
+		// 如果有已关联的云服务商
+		if (providers.length > 0) {
+			// 如果只有一个云服务商，直接返回
+			if (providers.length === 1) {
+				const providerId = providers[0];
+				const config = spaceConfig[providerId];
+				log(`使用已关联的云服务商: ${providerId}`);
+				return {
+					id: providerId,
+					label: providerId === 'aliyun' ? '阿里云' : providerId === 'tcb' ? '腾讯云' : '支付宝',
+					spaceInfo: config
+				};
+			}
+			
+			// 如果有多个，让用户选择
+			/**
+			 * @type {Array<{id: string, label: string, description: string, spaceInfo: any}>}
+			 */
+			const providerList = providers.map(p => ({
+				id: p,
+				label: p === 'aliyun' ? '阿里云' : p === 'tcb' ? '腾讯云' : '支付宝',
+				description: `已关联空间: ${spaceConfig[p].spaceName}`,
+				spaceInfo: spaceConfig[p]
+			}));
+			
+			// 添加"使用其他云服务商"选项
+			providerList.push({
+				id: 'other',
+				label: '使用其他云服务商',
+				description: '不使用已关联的云服务商',
+				spaceInfo: null
+			});
+			
+			const selectedProvider = await vscode.window.showQuickPick(
+				providerList,
+				{ placeHolder: '请选择云服务商' }
+			);
+			
+			if (!selectedProvider) {
+				return null;
+			}
+			
+			// 如果选择了"使用其他云服务商"，则调用selectProvider
+			if (selectedProvider.id === 'other') {
+				return await selectProvider();
+			}
+			
+			return selectedProvider;
+		}
+		
+		// 没有已关联的云服务商，调用原有的选择方法
+		return await selectProvider();
+	}
+
 	// 获取云服务商选择
 	async function selectProvider() {
 		/**
@@ -328,7 +542,8 @@ function activate(context) {
 		 */
 		const providers = [
 			{ label: '阿里云', id: 'aliyun', description: '阿里云服务' },
-			{ label: '腾讯云', id: 'tcb', description: '腾讯云服务' }
+			{ label: '腾讯云', id: 'tcb', description: '腾讯云服务' },
+			{ label: '支付宝', id: 'alipay', description: '支付宝服务' }
 		];
 		
 		const provider = await vscode.window.showQuickPick(
@@ -398,7 +613,7 @@ function activate(context) {
 		log(`已选择项目: ${selectedProject.label}`);
 
 		// 选择云服务商
-		const selectedProvider = await selectProvider();
+		const selectedProvider = await getOrSelectProvider();
 		if (!selectedProvider) {
 			log('用户取消了云服务商选择');
 			return; // 用户取消
@@ -466,6 +681,36 @@ function activate(context) {
 		);
 	});
 
+	// 检查是否已关联云空间
+	async function checkSpaceAssociation(filePath) {
+		// 获取云空间配置信息
+		const spaceConfig = getSpaceConfig();
+		const providers = Object.keys(spaceConfig);
+		
+		// 如果有关联的云空间，直接返回true
+		if (providers.length > 0) {
+			return true;
+		}
+		
+		// 如果没有关联的云空间，提示用户先关联
+		const result = await vscode.window.showWarningMessage(
+			'您尚未关联云空间，请先关联云空间再进行操作。',
+			'关联云空间',
+			'取消'
+		);
+		
+		if (result === '关联云空间') {
+			// 如果提供了文件路径，传递给关联命令
+			if (filePath) {
+				vscode.commands.executeCommand('unicloud-cli.linkFolderToSpace', vscode.Uri.file(filePath));
+			} else {
+				vscode.commands.executeCommand('unicloud-cli.linkFolderToSpace');
+			}
+		}
+		
+		return false;
+	}
+
 	// 上传云函数命令
 	const uploadFunctionCmd = vscode.commands.registerCommand('unicloud-cli.uploadCloudFunction', async function () {
 		log('开始执行上传云函数命令');
@@ -473,6 +718,12 @@ function activate(context) {
 		// 检查工作区
 		if (!checkWorkspace()) {
 			log('未找到有效的工作区');
+			return;
+		}
+
+		// 检查是否已关联云空间
+		if (!await checkSpaceAssociation()) {
+			log('未关联云空间，操作取消');
 			return;
 		}
 
@@ -503,7 +754,7 @@ function activate(context) {
 		}
 		log(`已选择项目: ${selectedProject.label}`);
 
-		const selectedProvider = await selectProvider();
+		const selectedProvider = await getOrSelectProvider();
 		if (!selectedProvider) {
 			log('用户取消了云服务商选择');
 			return;
@@ -687,6 +938,12 @@ function activate(context) {
 			return;
 		}
 
+		// 检查是否已关联云空间
+		if (!await checkSpaceAssociation()) {
+			log('未关联云空间，操作取消');
+			return;
+		}
+
 		// 获取项目和提供商选择
 		const projects = await getProjectList();
 		if (projects.length === 0) {
@@ -714,7 +971,7 @@ function activate(context) {
 		}
 		log(`已选择项目: ${selectedProject.label}`);
 
-		const selectedProvider = await selectProvider();
+		const selectedProvider = await getOrSelectProvider();
 		if (!selectedProvider) {
 			log('用户取消了云服务商选择');
 			return;
@@ -927,7 +1184,7 @@ function activate(context) {
 		}
 		log(`已选择项目: ${selectedProject.label}`);
 
-		const selectedProvider = await selectProvider();
+		const selectedProvider = await getOrSelectProvider();
 		if (!selectedProvider) {
 			log('用户取消了云服务商选择');
 			return;
@@ -1008,7 +1265,7 @@ function activate(context) {
 		}
 		log(`已选择项目: ${selectedProject.label}`);
 
-		const selectedProvider = await selectProvider();
+		const selectedProvider = await getOrSelectProvider();
 		if (!selectedProvider) {
 			log('用户取消了云服务商选择');
 			return;
@@ -1163,6 +1420,24 @@ function activate(context) {
 		
 		log(`已选择文件夹路径: ${folderPath}`);
 		
+		// 从文件夹名称判断云服务商
+		const folderName = path.basename(folderPath);
+		let detectedProvider = null;
+		
+		if (folderName.startsWith('uniCloud-')) {
+			if (folderName === 'uniCloud-aliyun') {
+				detectedProvider = { label: '阿里云', id: 'aliyun', description: '阿里云服务 (根据文件夹名称自动检测)' };
+			} else if (folderName === 'uniCloud-tcb') {
+				detectedProvider = { label: '腾讯云', id: 'tcb', description: '腾讯云服务 (根据文件夹名称自动检测)' };
+			} else if (folderName === 'uniCloud-alipay') {
+				detectedProvider = { label: '支付宝', id: 'alipay', description: '支付宝服务 (根据文件夹名称自动检测)' };
+			}
+			
+			if (detectedProvider) {
+				log(`根据文件夹名称 "${folderName}" 自动检测到云服务商: ${detectedProvider.label}`);
+			}
+		}
+		
 		// 获取项目和提供商选择
 		const projects = await getProjectList();
 		if (projects.length === 0) {
@@ -1190,7 +1465,32 @@ function activate(context) {
 		}
 		log(`已选择项目: ${selectedProject.label}`);
 
-		const selectedProvider = await selectProvider();
+		// 如果已检测到云服务商，则优先显示并默认选中
+		let selectedProvider = null;
+		
+		if (detectedProvider) {
+			// 构建提供商列表，将检测到的提供商放在第一位
+			const providers = [
+				detectedProvider,
+				...([
+					{ label: '阿里云', id: 'aliyun', description: '阿里云服务' },
+					{ label: '腾讯云', id: 'tcb', description: '腾讯云服务' },
+					{ label: '支付宝', id: 'alipay', description: '支付宝服务' }
+				].filter(p => p.id !== detectedProvider.id)) // 过滤掉已检测到的提供商，避免重复
+			];
+			
+			selectedProvider = await vscode.window.showQuickPick(
+				providers,
+				{ 
+					placeHolder: '请选择云服务商',
+					title: `已自动检测到云服务商: ${detectedProvider.label}`
+				}
+			);
+		} else {
+			// 没有检测到，使用常规选择
+			selectedProvider = await selectProvider();
+		}
+		
 		if (!selectedProvider) {
 			log('用户取消了云服务商选择');
 			return;
@@ -1275,57 +1575,167 @@ function activate(context) {
 		}
 		log(`已选择云空间: ${selectedSpace.spaceName}`);
 
-		// 创建或更新关联配置文件
+		// 存储关联信息到工作区设置文件
 		try {
-			// 确保目标文件夹是uniCloud项目文件夹
-			const uniCloudConfigPath = path.join(folderPath, 'uniCloud.config.js');
+			// 获取工作区配置
+			const config = vscode.workspace.getConfiguration('unicloud-cli');
 			
-			// 检查是否已存在相关配置
-			let configContent = '';
-			let existingConfig = {};
-			
-			if (fs.existsSync(uniCloudConfigPath)) {
-				log(`发现已存在的uniCloud配置文件: ${uniCloudConfigPath}`);
-				try {
-					// 读取现有配置
-					const configFileContent = fs.readFileSync(uniCloudConfigPath, 'utf8');
-					
-					// 提取配置对象
-					const configMatch = configFileContent.match(/module\.exports\s*=\s*({[\s\S]*})/);
-					if (configMatch && configMatch[1]) {
-						// 这里使用了一种简单的方式来解析配置，实际项目中可能需要更复杂的处理
-						try {
-							// 警告：eval可能有安全隐患，仅用于演示
-							existingConfig = eval(`(${configMatch[1]})`);
-							log(`解析现有配置: ${JSON.stringify(existingConfig)}`);
-						} catch (evalError) {
-							log(`解析配置对象失败: ${evalError.message}`);
-						}
-					}
-				} catch (readError) {
-					log(`读取配置文件失败: ${readError.message}`);
-				}
-			}
-			
-			// 更新配置对象
-			const updatedConfig = {
-				...existingConfig,
-				[selectedProvider.id]: {
-					spaceId: selectedSpace.id,
-					spaceName: selectedSpace.spaceName,
-					provider: selectedProvider.id
-				}
+			// 构建云空间关联信息
+			const spaceInfo = {
+				spaceId: selectedSpace.id,
+				spaceName: selectedSpace.spaceName,
+				provider: selectedProvider.id,
+				projectName: selectedProject.name,  // 添加项目名称
+				folderPath: folderPath  // 保存文件夹路径
 			};
 			
-			// 生成配置文件内容
-			configContent = `// uniCloud项目配置\nmodule.exports = ${JSON.stringify(updatedConfig, null, 2)}`;
+			// 读取现有的云空间关联信息
+			const spaceAssociations = config.get('spaceAssociations') || {};
 			
-			// 写入配置文件
-			fs.writeFileSync(uniCloudConfigPath, configContent);
+			// 更新配置，将当前选择的提供商与云空间关联
+			spaceAssociations[selectedProvider.id] = spaceInfo;
+			
+			// 更新工作区设置
+			await config.update('spaceAssociations', spaceAssociations, vscode.ConfigurationTarget.Workspace);
+			
+			// 更新关联的云空间文件夹列表并刷新视图
+			loadAssociatedCloudFolders();
+			cloudSpaceDecorationProvider.updateDecorations();
+			cloudSpaceTreeDataProvider.refresh();
 			
 			log(`成功关联文件夹 "${folderPath}" 到云空间 "${selectedSpace.spaceName}"`, true);
+			vscode.window.showInformationMessage(`已成功将云空间 "${selectedSpace.spaceName}" 关联到当前工作区`);
 		} catch (error) {
 			log(`关联文件夹到云空间失败: ${error.message}`, true);
+			vscode.window.showErrorMessage(`关联云空间失败: ${error.message}`);
+		}
+	});
+
+	// 显示和管理云空间关联信息命令
+	const manageSpaceAssociationsCmd = vscode.commands.registerCommand('unicloud-cli.manageSpaceAssociations', async function () {
+		log('开始执行管理云空间关联信息命令');
+		
+		// 检查工作区
+		if (!checkWorkspace()) {
+			log('未找到有效的工作区');
+			return;
+		}
+		
+		// 获取当前关联的云空间信息
+		const spaceConfig = getSpaceConfig();
+		const providers = Object.keys(spaceConfig);
+		
+		if (providers.length === 0) {
+			const result = await vscode.window.showInformationMessage(
+				'当前工作区没有关联的云空间。',
+				'关联云空间',
+				'取消'
+			);
+			
+			if (result === '关联云空间') {
+				vscode.commands.executeCommand('unicloud-cli.linkFolderToSpace');
+			}
+			return;
+		}
+		
+		// 构建关联信息显示项
+		/**
+		 * @type {Array<import('vscode').QuickPickItem & {providerId?: string, actionType?: string}>}
+		 */
+		const spaceItems = providers.map(p => {
+			const space = spaceConfig[p];
+			return {
+				label: `${p === 'aliyun' ? '阿里云' : p === 'tcb' ? '腾讯云' : '支付宝'}: ${space.spaceName}`,
+				description: `空间ID: ${space.spaceId}`,
+				providerId: p
+			};
+		});
+		
+		// 添加管理选项
+		spaceItems.push({ 
+			label: '添加新关联', 
+			description: '关联新的云空间到本工作区', 
+			actionType: 'add' 
+		});
+		
+		if (providers.length > 0) {
+			spaceItems.push({ 
+				label: '删除关联', 
+				description: '删除已有的云空间关联', 
+				actionType: 'delete' 
+			});
+		}
+		
+		// 显示关联信息和选项
+		const selectedItem = await vscode.window.showQuickPick(
+			spaceItems,
+			{ 
+				placeHolder: '当前工作区关联的云空间',
+				title: '云空间关联管理'
+			}
+		);
+		
+		if (!selectedItem) {
+			log('用户取消了云空间关联管理');
+			return;
+		}
+		
+		// 处理选择的操作
+		if (selectedItem.actionType === 'add') {
+			// 添加新关联
+			vscode.commands.executeCommand('unicloud-cli.linkFolderToSpace');
+		} else if (selectedItem.actionType === 'delete') {
+			// 删除关联
+			const providerToDelete = await vscode.window.showQuickPick(
+				providers.map(p => ({
+					label: p === 'aliyun' ? '阿里云' : p === 'tcb' ? '腾讯云' : '支付宝',
+					description: `空间名称: ${spaceConfig[p].spaceName}`,
+					providerId: p
+				})),
+				{ placeHolder: '选择要删除的云空间关联' }
+			);
+			
+			if (!providerToDelete) {
+				log('用户取消了删除操作');
+				return;
+			}
+			
+			// 确认删除
+			const confirmed = await vscode.window.showWarningMessage(
+				`确定要删除 ${providerToDelete.label} 云空间关联吗?`,
+				{ modal: true },
+				'确定删除'
+			);
+			
+			if (confirmed === '确定删除') {
+				try {
+					// 获取当前配置
+					const config = vscode.workspace.getConfiguration('unicloud-cli');
+					const spaceAssociations = config.get('spaceAssociations') || {};
+					
+					// 删除指定提供商的关联信息
+					delete spaceAssociations[providerToDelete.providerId];
+					
+					// 更新配置
+					await config.update('spaceAssociations', spaceAssociations, vscode.ConfigurationTarget.Workspace);
+					
+					log(`已删除 ${providerToDelete.label} 的云空间关联`, true);
+				} catch (error) {
+					log(`删除云空间关联失败: ${error.message}`, true);
+					vscode.window.showErrorMessage(`删除云空间关联失败: ${error.message}`);
+				}
+			}
+		} else if (selectedItem.providerId) {
+			// 显示选中云空间的详细信息
+			const provider = selectedItem.providerId;
+			const space = spaceConfig[provider];
+			
+			const infoMessage = 
+				`服务商: ${provider === 'aliyun' ? '阿里云' : provider === 'tcb' ? '腾讯云' : '支付宝'}\n` +
+				`空间名称: ${space.spaceName}\n` +
+				`空间ID: ${space.spaceId}`;
+			
+			vscode.window.showInformationMessage(infoMessage);
 		}
 	});
 
@@ -1440,6 +1850,860 @@ function activate(context) {
 		}
 	});
 
+	// 上传单个云函数命令（右键菜单）
+	const uploadSingleCloudFunctionCmd = vscode.commands.registerCommand('unicloud-cli.uploadSingleCloudFunction', async function (uri) {
+		log('开始执行上传单个云函数命令（右键菜单）');
+		
+		// 检查工作区
+		if (!checkWorkspace()) {
+			log('未找到有效的工作区');
+			return;
+		}
+		// 检查是否关联了云空间
+		if (!await checkSpaceAssociation()) {
+			log('未关联云空间，操作取消');
+			return;
+		}
+		// 获取选中的文件夹路径
+		if (!uri || !uri.fsPath) {
+			log('未选择云函数文件夹');
+			return;
+		}
+		
+		const cloudFunctionPath = uri.fsPath;
+		const cloudFunctionName = path.basename(cloudFunctionPath);
+		log(`已选择云函数: ${cloudFunctionName}, 路径: ${cloudFunctionPath}`);
+		
+		// 检查是否已关联云空间
+		if (!await checkSpaceAssociation(findCloudSpaceRoot(cloudFunctionPath))) {
+			log('未关联云空间，操作取消');
+			return;
+		}
+		
+		// 获取项目和提供商信息
+		const result = await getProjectAndProviderFromAssociation(cloudFunctionPath);
+		if (result.cancelled) {
+			return; // 用户取消了操作
+		}
+		
+		// 询问是否强制覆盖
+		/**
+		 * @type {Array<import('vscode').QuickPickItem & {value: boolean}>}
+		 */
+		const overrideOptions = [
+			{ label: '是', value: true, description: '强制覆盖现有资源' },
+			{ label: '否', value: false, description: '不强制覆盖' }
+		];
+		
+		const forceOverride = await vscode.window.showQuickPick(
+			overrideOptions,
+			{ placeHolder: '是否强制覆盖目标资源?' }
+		);
+
+		if (!forceOverride) {
+			log('用户取消了强制覆盖选择');
+			return;
+		}
+		
+		// 构建上传命令
+		let command = `cli cloud functions --upload cloudfunction --prj "${result.projectName}" --provider ${result.provider?.id || ''} --name ${cloudFunctionName}`;
+		
+		// 如果需要强制覆盖
+		if (forceOverride.value) {
+			command += ' --force';
+		}
+		
+		// 执行上传命令
+		vscode.window.withProgress(
+			{
+				location: vscode.ProgressLocation.Notification,
+				title: `正在上传云函数 ${cloudFunctionName}...`,
+				cancellable: false
+			},
+			async (progress) => {
+				log(`开始执行上传命令: ${command}`);
+				const result = await executeCliCommand(command);
+				
+				if (result.success) {
+					log(`云函数 ${cloudFunctionName} 上传成功!`, true);
+				} else {
+					log(`上传失败: ${result.message}`, true);
+				}
+			}
+		);
+	});
+	
+	// 上传所有云函数命令（右键菜单）
+	const uploadAllCloudFunctionsCmd = vscode.commands.registerCommand('unicloud-cli.uploadAllCloudFunctions', async function (uri) {
+		log('开始执行上传所有云函数命令（右键菜单）');
+		
+		// 检查工作区
+		if (!checkWorkspace()) {
+			log('未找到有效的工作区');
+			return;
+		}
+		// 检查是否关联了云空间
+		if (!await checkSpaceAssociation()) {
+			log('未关联云空间，操作取消');
+			return;
+		}
+		// 获取选中的文件夹路径
+		if (!uri || !uri.fsPath) {
+			log('未选择cloudfunctions文件夹');
+			return;
+		}
+		
+		const cloudFunctionsPath = uri.fsPath;
+		log(`已选择cloudfunctions文件夹: ${cloudFunctionsPath}`);
+		
+		// 检查是否已关联云空间
+		if (!await checkSpaceAssociation(findCloudSpaceRoot(cloudFunctionsPath))) {
+			log('未关联云空间，操作取消');
+			return;
+		}
+		
+		// 获取项目和提供商信息
+		const result = await getProjectAndProviderFromAssociation(cloudFunctionsPath);
+		if (result.cancelled) {
+			return; // 用户取消了操作
+		}
+		
+		// 询问是否强制覆盖
+		/**
+		 * @type {Array<import('vscode').QuickPickItem & {value: boolean}>}
+		 */
+		const overrideOptions = [
+			{ label: '是', value: true, description: '强制覆盖现有资源' },
+			{ label: '否', value: false, description: '不强制覆盖' }
+		];
+		
+		const forceOverride = await vscode.window.showQuickPick(
+			overrideOptions,
+			{ placeHolder: '是否强制覆盖目标资源?' }
+		);
+
+		if (!forceOverride) {
+			log('用户取消了强制覆盖选择');
+			return;
+		}
+		
+		// 构建上传命令
+		let command = `cli cloud functions --upload all --prj "${result.projectName}" --provider ${result.provider?.id || ''}`;
+		
+		// 如果需要强制覆盖
+		if (forceOverride.value) {
+			command += ' --force';
+		}
+		
+		// 执行上传命令
+		vscode.window.withProgress(
+			{
+				location: vscode.ProgressLocation.Notification,
+				title: '正在上传所有云函数...',
+				cancellable: false
+			},
+			async (progress) => {
+				log(`开始执行上传命令: ${command}`);
+				const result = await executeCliCommand(command);
+				
+				if (result.success) {
+					log('所有云函数上传成功!', true);
+				} else {
+					log(`上传失败: ${result.message}`, true);
+				}
+			}
+		);
+	});
+	
+	// 上传数据库Schema命令（右键菜单）
+	const uploadDatabaseCmd = vscode.commands.registerCommand('unicloud-cli.uploadDatabase', async function (uri) {
+		log('开始执行上传数据库Schema命令（右键菜单）');
+		
+		// 检查工作区
+		if (!checkWorkspace()) {
+			log('未找到有效的工作区');
+			return;
+		}
+		// 检查是否关联了云空间
+		if (!await checkSpaceAssociation()) {
+			log('未关联云空间，操作取消');
+			return;
+		}
+		// 获取选中的文件夹路径
+		if (!uri || !uri.fsPath) {
+			log('未选择database文件夹');
+			return;
+		}
+		
+		const databasePath = uri.fsPath;
+		log(`已选择database文件夹: ${databasePath}`);
+		
+		// 检查是否已关联云空间
+		if (!await checkSpaceAssociation(findCloudSpaceRoot(databasePath))) {
+			log('未关联云空间，操作取消');
+			return;
+		}
+		
+		// 获取项目和提供商信息
+		const result = await getProjectAndProviderFromAssociation(databasePath);
+		if (result.cancelled) {
+			return; // 用户取消了操作
+		}
+		
+		// 询问是否强制覆盖
+		/**
+		 * @type {Array<import('vscode').QuickPickItem & {value: boolean}>}
+		 */
+		const overrideOptions = [
+			{ label: '是', value: true, description: '强制覆盖现有资源' },
+			{ label: '否', value: false, description: '不强制覆盖' }
+		];
+		
+		const forceOverride = await vscode.window.showQuickPick(
+			overrideOptions,
+			{ placeHolder: '是否强制覆盖目标资源?' }
+		);
+
+		if (!forceOverride) {
+			log('用户取消了强制覆盖选择');
+			return;
+		}
+		
+		// 构建上传命令
+		let command = `cli cloud functions --upload db --prj "${result.projectName}" --provider ${result.provider?.id || ''}`;
+		
+		// 如果需要强制覆盖
+		if (forceOverride.value) {
+			command += ' --force';
+		}
+		
+		// 执行上传命令
+		vscode.window.withProgress(
+			{
+				location: vscode.ProgressLocation.Notification,
+				title: '正在上传数据库Schema...',
+				cancellable: false
+			},
+			async (progress) => {
+				log(`开始执行上传命令: ${command}`);
+				const result = await executeCliCommand(command);
+				
+				if (result.success) {
+					log('数据库Schema上传成功!', true);
+				} else {
+					log(`上传失败: ${result.message}`, true);
+				}
+			}
+		);
+	});
+
+	// 下载单个云函数命令（右键菜单）
+	const downloadSingleCloudFunctionCmd = vscode.commands.registerCommand('unicloud-cli.downloadSingleCloudFunction', async function (uri) {
+		log('开始执行下载单个云函数命令（右键菜单）');
+		
+		// 检查工作区
+		if (!checkWorkspace()) {
+			log('未找到有效的工作区');
+			return;
+		}
+		// 检查是否关联了云空间
+		if (!await checkSpaceAssociation()) {
+			log('未关联云空间，操作取消');
+			return;
+		}
+		// 获取选中的文件夹路径
+		if (!uri || !uri.fsPath) {
+			log('未选择云函数文件夹');
+			return;
+		}
+		
+		const cloudFunctionPath = uri.fsPath;
+		const cloudFunctionName = path.basename(cloudFunctionPath);
+		log(`已选择云函数: ${cloudFunctionName}, 路径: ${cloudFunctionPath}`);
+		
+		// 检查是否已关联云空间
+		if (!await checkSpaceAssociation(findCloudSpaceRoot(cloudFunctionPath))) {
+			log('未关联云空间，操作取消');
+			return;
+		}
+		
+		// 获取项目和提供商信息
+		const result = await getProjectAndProviderFromAssociation(cloudFunctionPath);
+		if (result.cancelled) {
+			return; // 用户取消了操作
+		}
+		
+		// 询问是否强制覆盖
+		/**
+		 * @type {Array<import('vscode').QuickPickItem & {value: boolean}>}
+		 */
+		const overrideOptions = [
+			{ label: '是', value: true, description: '强制覆盖本地资源' },
+			{ label: '否', value: false, description: '不强制覆盖' }
+		];
+		
+		const forceOverride = await vscode.window.showQuickPick(
+			overrideOptions,
+			{ placeHolder: '是否强制覆盖本地资源?' }
+		);
+
+		if (!forceOverride) {
+			log('用户取消了强制覆盖选择');
+			return;
+		}
+		
+		// 构建下载命令
+		let command = `cli cloud functions --download cloudfunction --prj "${result.projectName}" --provider ${result.provider?.id || ''} --name ${cloudFunctionName}`;
+		
+		// 如果需要强制覆盖
+		if (forceOverride.value) {
+			command += ' --force';
+		}
+		
+		// 执行下载命令
+		vscode.window.withProgress(
+			{
+				location: vscode.ProgressLocation.Notification,
+				title: `正在下载云函数 ${cloudFunctionName}...`,
+				cancellable: false
+			},
+			async (progress) => {
+				log(`开始执行下载命令: ${command}`);
+				const result = await executeCliCommand(command);
+				
+				if (result.success) {
+					log(`云函数 ${cloudFunctionName} 下载成功!`, true);
+				} else {
+					log(`下载失败: ${result.message}`, true);
+				}
+			}
+		);
+	});
+	
+	// 下载所有云函数命令（右键菜单）
+	const downloadAllCloudFunctionsCmd = vscode.commands.registerCommand('unicloud-cli.downloadAllCloudFunctions', async function (uri) {
+		log('开始执行下载所有云函数命令（右键菜单）');
+		
+		// 检查工作区
+		if (!checkWorkspace()) {
+			log('未找到有效的工作区');
+			return;
+		}
+		// 检查是否关联了云空间
+		if (!await checkSpaceAssociation()) {
+			log('未关联云空间，操作取消');
+			return;
+		}
+		// 获取选中的文件夹路径
+		if (!uri || !uri.fsPath) {
+			log('未选择cloudfunctions文件夹');
+			return;
+		}
+		
+		const cloudFunctionsPath = uri.fsPath;
+		log(`已选择cloudfunctions文件夹: ${cloudFunctionsPath}`);
+		
+		// 检查是否已关联云空间
+		if (!await checkSpaceAssociation(findCloudSpaceRoot(cloudFunctionsPath))) {
+			log('未关联云空间，操作取消');
+			return;
+		}
+		
+		// 获取项目和提供商信息
+		const result = await getProjectAndProviderFromAssociation(cloudFunctionsPath);
+		if (result.cancelled) {
+			return; // 用户取消了操作
+		}
+		
+		// 询问是否强制覆盖
+		/**
+		 * @type {Array<import('vscode').QuickPickItem & {value: boolean}>}
+		 */
+		const overrideOptions = [
+			{ label: '是', value: true, description: '强制覆盖本地资源' },
+			{ label: '否', value: false, description: '不强制覆盖' }
+		];
+		
+		const forceOverride = await vscode.window.showQuickPick(
+			overrideOptions,
+			{ placeHolder: '是否强制覆盖本地资源?' }
+		);
+
+		if (!forceOverride) {
+			log('用户取消了强制覆盖选择');
+			return;
+		}
+		
+		// 构建下载命令
+		let command = `cli cloud functions --download all --prj "${result.projectName}" --provider ${result.provider?.id || ''}`;
+		
+		// 如果需要强制覆盖
+		if (forceOverride.value) {
+			command += ' --force';
+		}
+		
+		// 执行下载命令
+		vscode.window.withProgress(
+			{
+				location: vscode.ProgressLocation.Notification,
+				title: '正在下载所有云函数...',
+				cancellable: false
+			},
+			async (progress) => {
+				log(`开始执行下载命令: ${command}`);
+				const result = await executeCliCommand(command);
+				
+				if (result.success) {
+					log('所有云函数下载成功!', true);
+				} else {
+					log(`下载失败: ${result.message}`, true);
+				}
+			}
+		);
+	});
+	
+	// 下载数据库Schema命令（右键菜单）
+	const downloadDatabaseCmd = vscode.commands.registerCommand('unicloud-cli.downloadDatabase', async function (uri) {
+		log('开始执行下载数据库Schema命令（右键菜单）');
+		
+		// 检查工作区
+		if (!checkWorkspace()) {
+			log('未找到有效的工作区');
+			return;
+		}
+		// 检查是否关联了云空间
+		if (!await checkSpaceAssociation()) {
+			log('未关联云空间，操作取消');
+			return;
+		}
+		
+		// 获取选中的文件夹路径
+		if (!uri || !uri.fsPath) {
+			log('未选择database文件夹');
+			return;
+		}
+		
+		const databasePath = uri.fsPath;
+		log(`已选择database文件夹: ${databasePath}`);
+		
+		// 检查是否已关联云空间
+		if (!await checkSpaceAssociation(findCloudSpaceRoot(databasePath))) {
+			log('未关联云空间，操作取消');
+			return;
+		}
+		
+		// 获取项目和提供商信息
+		const result = await getProjectAndProviderFromAssociation(databasePath);
+		if (result.cancelled) {
+			return; // 用户取消了操作
+		}
+		
+		// 询问是否强制覆盖
+		/**
+		 * @type {Array<import('vscode').QuickPickItem & {value: boolean}>}
+		 */
+		const overrideOptions = [
+			{ label: '是', value: true, description: '强制覆盖本地资源' },
+			{ label: '否', value: false, description: '不强制覆盖' }
+		];
+		
+		const forceOverride = await vscode.window.showQuickPick(
+			overrideOptions,
+			{ placeHolder: '是否强制覆盖本地资源?' }
+		);
+
+		if (!forceOverride) {
+			log('用户取消了强制覆盖选择');
+			return;
+		}
+		
+		// 构建下载命令
+		let command = `cli cloud functions --download db --prj "${result.projectName}" --provider ${result.provider?.id || ''}`;
+		
+		// 如果需要强制覆盖
+		if (forceOverride.value) {
+			command += ' --force';
+		}
+		
+		// 执行下载命令
+		vscode.window.withProgress(
+			{
+				location: vscode.ProgressLocation.Notification,
+				title: '正在下载数据库Schema...',
+				cancellable: false
+			},
+			async (progress) => {
+				log(`开始执行下载命令: ${command}`);
+				const result = await executeCliCommand(command);
+				
+				if (result.success) {
+					log('数据库Schema下载成功!', true);
+				} else {
+					log(`下载失败: ${result.message}`, true);
+				}
+			}
+		);
+	});
+
+	// 上传公共模块命令（右键菜单）
+	const uploadCommonModuleCmd = vscode.commands.registerCommand('unicloud-cli.uploadCommonModule', async function (uri) {
+		log('开始执行上传公共模块命令（右键菜单）');
+		
+		// 检查工作区
+		if (!checkWorkspace()) {
+			log('未找到有效的工作区');
+			return;
+		}
+		// 检查是否关联了云空间
+		if (!await checkSpaceAssociation()) {
+			log('未关联云空间，操作取消');
+			return;
+		}
+		// 获取选中的文件夹路径
+		if (!uri || !uri.fsPath) {
+			log('未选择公共模块文件夹');
+			return;
+		}
+		
+		const commonModulePath = uri.fsPath;
+		const commonModuleName = path.basename(commonModulePath);
+		log(`已选择公共模块: ${commonModuleName}, 路径: ${commonModulePath}`);
+		
+		// 检查是否已关联云空间
+		if (!await checkSpaceAssociation(findCloudSpaceRoot(commonModulePath))) {
+			log('未关联云空间，操作取消');
+			return;
+		}
+		
+		// 获取项目和提供商信息
+		const result = await getProjectAndProviderFromAssociation(commonModulePath);
+		if (result.cancelled) {
+			return; // 用户取消了操作
+		}
+		
+		// 询问是否强制覆盖
+		/**
+		 * @type {Array<import('vscode').QuickPickItem & {value: boolean}>}
+		 */
+		const overrideOptions = [
+			{ label: '是', value: true, description: '强制覆盖现有资源' },
+			{ label: '否', value: false, description: '不强制覆盖' }
+		];
+		
+		const forceOverride = await vscode.window.showQuickPick(
+			overrideOptions,
+			{ placeHolder: '是否强制覆盖目标资源?' }
+		);
+
+		if (!forceOverride) {
+			log('用户取消了强制覆盖选择');
+			return;
+		}
+		
+		// 构建上传命令
+		let command = `cli cloud functions --upload common --prj "${result.projectName}" --provider ${result.provider?.id || ''} --name ${commonModuleName}`;
+		
+		// 如果需要强制覆盖
+		if (forceOverride.value) {
+			command += ' --force';
+		}
+		
+		// 执行上传命令
+		vscode.window.withProgress(
+			{
+				location: vscode.ProgressLocation.Notification,
+				title: `正在上传公共模块 ${commonModuleName}...`,
+				cancellable: false
+			},
+			async (progress) => {
+				log(`开始执行上传命令: ${command}`);
+				const result = await executeCliCommand(command);
+				
+				if (result.success) {
+					log(`公共模块 ${commonModuleName} 上传成功!`, true);
+				} else {
+					log(`上传失败: ${result.message}`, true);
+				}
+			}
+		);
+	});
+	
+	// 本地运行云函数命令（右键菜单）
+	const runCloudFunctionCmd = vscode.commands.registerCommand('unicloud-cli.runCloudFunction', async function (uri) {
+		log('开始执行本地运行云函数命令（右键菜单）');
+		
+		// 检查工作区
+		if (!checkWorkspace()) {
+			log('未找到有效的工作区');
+			return;
+		}
+		// 检查是否关联了云空间
+		if (!await checkSpaceAssociation()) {
+			log('未关联云空间，操作取消');
+			return;
+		}
+		
+		// 获取选中的文件路径
+		if (!uri || !uri.fsPath) {
+			log('未选择云函数入口文件');
+			return;
+		}
+		
+		const indexFilePath = uri.fsPath;
+		// 获取云函数名称（所在文件夹名称）
+		const cloudFunctionName = path.basename(path.dirname(indexFilePath));
+		log(`已选择云函数入口文件: ${indexFilePath}, 云函数名称: ${cloudFunctionName}`);
+		
+		// 检查是否已关联云空间
+		if (!await checkSpaceAssociation(findCloudSpaceRoot(indexFilePath))) {
+			log('未关联云空间，操作取消');
+			return;
+		}
+		
+		// 获取项目和提供商信息
+		const result = await getProjectAndProviderFromAssociation(indexFilePath);
+		if (result.cancelled) {
+			return; // 用户取消了操作
+		}
+		
+		// 询问运行参数
+		const params = await vscode.window.showInputBox({
+			placeHolder: '输入云函数参数，JSON格式 (可选)',
+			prompt: '请输入云函数调用参数（JSON格式）',
+			value: '{}'
+		});
+		
+		if (params === undefined) {
+			log('用户取消了参数输入');
+			return;
+		}
+		
+		let validParams = params;
+		// 验证JSON格式
+		try {
+			if (params && params.trim()) {
+				JSON.parse(params);
+			} else {
+				validParams = '{}';
+			}
+		} catch (error) {
+			log(`JSON参数格式错误: ${error.message}`, true);
+			return;
+		}
+		
+		// 构建运行命令
+		let command = `cli cloud functions --run ${cloudFunctionName} --prj "${result.projectName}" --provider ${result.provider?.id || ''} --params ${validParams.replace(/"/g, '\\"')}`;
+		
+		// 创建输出通道以显示运行结果
+		const outputChannel = initOutputChannel();
+		outputChannel.clear();
+		outputChannel.appendLine(`正在本地运行云函数 ${cloudFunctionName}...`);
+		outputChannel.appendLine(`参数: ${validParams}`);
+		outputChannel.show();
+		
+		// 执行运行命令
+		vscode.window.withProgress(
+			{
+				location: vscode.ProgressLocation.Notification,
+				title: `正在运行云函数 ${cloudFunctionName}...`,
+				cancellable: false
+			},
+			async (progress) => {
+				log(`开始执行运行命令: ${command}`);
+				const result = await executeCliCommand(command);
+				
+				if (result.success) {
+					outputChannel.appendLine('运行结果:');
+					outputChannel.appendLine(result.message);
+					log(`云函数 ${cloudFunctionName} 运行成功!`, true);
+				} else {
+					outputChannel.appendLine('运行错误:');
+					outputChannel.appendLine(result.message);
+					log(`运行失败: ${result.message}`, true);
+				}
+			}
+		);
+	});
+
+	// 查找路径所属的云空间主文件夹
+	function findCloudSpaceRoot(filePath) {
+		// 如果是云函数文件夹，向上查找
+		const pathParts = filePath.split(path.sep);
+		
+		// 查找uniCloud-aliyun或uniCloud-tcb目录
+		for (let i = pathParts.length - 1; i >= 0; i--) {
+			if (pathParts[i] === 'uniCloud-aliyun' || pathParts[i] === 'uniCloud-tcb' || pathParts[i] === 'uniCloud-alipay') {
+				// 找到云空间根目录，返回完整路径
+				return pathParts.slice(0, i + 1).join(path.sep);
+			}
+		}
+		
+		// 如果没找到，返回原路径
+		return filePath;
+	}
+
+	// 从路径获取云服务商类型
+	function getProviderTypeFromPath(filePath) {
+		if (filePath.includes('uniCloud-aliyun')) {
+			return 'aliyun';
+		} else if (filePath.includes('uniCloud-tcb')) {
+			return 'tcb';
+		} else if (filePath.includes('uniCloud-alipay')) {
+			return 'alipay';
+		}
+		return null;
+	}
+
+	// 从云空间关联中获取或选择项目和提供商
+	async function getProjectAndProviderFromAssociation(filePath) {
+		// 如果提供了文件路径，先尝试获取对应云空间的关联信息
+		let preferredProvider = null;
+		if (filePath) {
+			const spaceRoot = findCloudSpaceRoot(filePath);
+			const providerType = getProviderTypeFromPath(filePath);
+			
+			if (providerType) {
+				log(`检测到路径 ${filePath} 属于 ${providerType} 云空间，根目录: ${spaceRoot}`);
+				
+				// 获取云空间配置信息
+				const spaceConfig = getSpaceConfig();
+				if (spaceConfig[providerType]) {
+					preferredProvider = {
+						id: providerType,
+						label: providerType === 'aliyun' ? '阿里云' : providerType === 'tcb' ? '腾讯云' : '支付宝',
+						spaceInfo: spaceConfig[providerType]
+					};
+					log(`找到匹配的云空间关联: ${providerType}`);
+				}
+			}
+		}
+		
+		// 获取云空间配置信息
+		const spaceConfig = getSpaceConfig();
+		const providers = Object.keys(spaceConfig);
+		
+		let projectName = '';
+		let selectedProvider = null;
+		
+		// 如果有从路径中推断出的关联信息，优先使用
+		if (preferredProvider) {
+			selectedProvider = preferredProvider;
+			if (preferredProvider.spaceInfo && preferredProvider.spaceInfo.projectName) {
+				projectName = preferredProvider.spaceInfo.projectName;
+				log(`自动使用路径匹配的云空间关联，项目: ${projectName}`);
+			}
+		}
+		// 否则，处理云服务商信息
+		else if (providers.length === 1) {
+			// 只有一个关联的云服务商，直接使用
+			const providerId = providers[0];
+			const config = spaceConfig[providerId];
+			selectedProvider = {
+				id: providerId,
+				label: providerId === 'aliyun' ? '阿里云' : providerId === 'tcb' ? '腾讯云' : '支付宝',
+				spaceInfo: config
+			};
+			log(`自动使用已关联的云服务商: ${providerId}`);
+			
+			// 同时获取项目名称
+			if (config.projectName) {
+				projectName = config.projectName;
+				log(`自动使用关联的项目: ${projectName}`);
+			}
+		} else if (providers.length > 1) {
+			// 有多个关联的云服务商，让用户选择
+			selectedProvider = await getOrSelectProvider();
+			if (!selectedProvider) {
+				log('用户取消了云服务商选择');
+				return { cancelled: true };
+			}
+			
+			// 获取选中云服务商的项目信息
+			if (selectedProvider && 'spaceInfo' in selectedProvider && selectedProvider.spaceInfo && selectedProvider.spaceInfo.projectName) {
+				projectName = selectedProvider.spaceInfo.projectName;
+				log(`使用关联的项目: ${projectName}`);
+			}
+		} else {
+			// 没有关联的云服务商，需要选择
+			// 获取项目列表
+			const projects = await getProjectList();
+			if (projects.length === 0) {
+				log('未找到可用项目', true);
+				return { cancelled: true };
+			}
+			
+			// 选择项目
+			if (projects.length === 1) {
+				// 只有一个项目，直接使用
+				projectName = projects[0].name;
+				log(`只有一个可用项目，自动使用: ${projectName}`);
+			} else {
+				// 多个项目，让用户选择
+				const selectedProject = await vscode.window.showQuickPick(
+					projects.map(p => ({ 
+						label: p.name, 
+						id: p.id,
+						name: p.name,
+						description: `项目ID: ${p.id}`
+					})),
+					{ placeHolder: '请选择项目' }
+				);
+
+				if (!selectedProject) {
+					log('用户取消了项目选择');
+					return { cancelled: true };
+				}
+				projectName = selectedProject.name;
+				log(`已选择项目: ${projectName}`);
+			}
+			
+			// 选择云服务商
+			selectedProvider = await selectProvider();
+			if (!selectedProvider) {
+				log('用户取消了云服务商选择');
+				return { cancelled: true };
+			}
+			log(`已选择云服务商: ${selectedProvider.label}`);
+		}
+		
+		// 如果需要但仍然没有项目名称，获取项目列表
+		if (!projectName) {
+			const projects = await getProjectList();
+			if (projects.length === 0) {
+				log('未找到可用项目', true);
+				return { cancelled: true };
+			} else if (projects.length === 1) {
+				// 只有一个项目，直接使用
+				projectName = projects[0].name;
+				log(`自动使用项目: ${projectName}`);
+			} else {
+				// 多个项目，让用户选择
+				const selectedProject = await vscode.window.showQuickPick(
+					projects.map(p => ({ 
+						label: p.name, 
+						id: p.id,
+						name: p.name,
+						description: `项目ID: ${p.id}`
+					})),
+					{ placeHolder: '请选择项目' }
+				);
+
+				if (!selectedProject) {
+					log('用户取消了项目选择');
+					return { cancelled: true };
+				}
+				projectName = selectedProject.name;
+				log(`已选择项目: ${projectName}`);
+			}
+		}
+		
+		return {
+			projectName,
+			provider: selectedProvider,
+			cancelled: false
+		};
+	}
+
 	context.subscriptions.push(disposable);
 	context.subscriptions.push(uploadFunctionCmd);
 	context.subscriptions.push(downloadFunctionCmd);
@@ -1448,6 +2712,38 @@ function activate(context) {
 	context.subscriptions.push(assignSpaceCmd);
 	context.subscriptions.push(linkFolderToSpaceCmd);
 	context.subscriptions.push(configureCLIPathCmd);
+	context.subscriptions.push(manageSpaceAssociationsCmd);
+	context.subscriptions.push(uploadSingleCloudFunctionCmd);
+	context.subscriptions.push(uploadAllCloudFunctionsCmd);
+	context.subscriptions.push(uploadDatabaseCmd);
+	context.subscriptions.push(downloadSingleCloudFunctionCmd);
+	context.subscriptions.push(downloadAllCloudFunctionsCmd);
+	context.subscriptions.push(downloadDatabaseCmd);
+	context.subscriptions.push(uploadCommonModuleCmd);
+	context.subscriptions.push(runCloudFunctionCmd);
+}
+
+// 加载已关联的云空间文件夹
+function loadAssociatedCloudFolders() {
+	try {
+		const config = vscode.workspace.getConfiguration('unicloud-cli');
+		const spaceAssociations = config.get('spaceAssociations') || {};
+		
+		// 清空现有列表
+		associatedCloudFolders = [];
+		
+		// 添加所有关联的文件夹路径
+		for (const providerId in spaceAssociations) {
+			const spaceInfo = spaceAssociations[providerId];
+			if (spaceInfo.folderPath) {
+				associatedCloudFolders.push(spaceInfo.folderPath);
+			}
+		}
+		
+		log(`已加载 ${associatedCloudFolders.length} 个关联的云空间文件夹`);
+	} catch (error) {
+		log(`加载关联的云空间文件夹失败: ${error.message}`);
+	}
 }
 
 // This method is called when your extension is deactivated

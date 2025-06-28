@@ -19,8 +19,32 @@
           "type": "string",
           "default": "C:\\Program Files\\HBuilderX\\cli.exe",
           "description": "HBuilderX CLI 工具的路径"
+        },
+        "unicloud-cli.spaceAssociations": {
+          "type": "object",
+          "default": {},
+          "description": "云空间关联信息"
         }
       }
+    },
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "unicloud-explorer",
+          "title": "UniCloud 云空间",
+          "icon": "$(cloud)"
+        }
+      ]
+    },
+    "views": {
+      "unicloud-explorer": [
+        {
+          "id": "uniCloudSpaces",
+          "name": "已关联云空间",
+          "icon": "$(cloud)",
+          "contextualTitle": "UniCloud 云空间"
+        }
+      ]
     },
     "commands": [
       {
@@ -53,25 +77,107 @@
       },
       {
         "command": "unicloud-cli.configureCLIPath",
-        "title": "UniCloud: 配置 CLI 路径"
+        "title": "UniCloud: 配置CLI路径"
+      },
+      {
+        "command": "unicloud-cli.manageSpaceAssociations",
+        "title": "UniCloud: 管理云空间关联"
+      },
+      {
+        "command": "unicloud-cli.uploadSingleCloudFunction",
+        "title": "UniCloud: 上传此云函数"
+      },
+      {
+        "command": "unicloud-cli.uploadAllCloudFunctions",
+        "title": "UniCloud: 上传所有云函数"
+      },
+      {
+        "command": "unicloud-cli.uploadDatabase",
+        "title": "UniCloud: 上传数据库Schema"
+      },
+      {
+        "command": "unicloud-cli.downloadSingleCloudFunction",
+        "title": "UniCloud: 下载此云函数"
+      },
+      {
+        "command": "unicloud-cli.downloadAllCloudFunctions",
+        "title": "UniCloud: 下载所有云函数"
+      },
+      {
+        "command": "unicloud-cli.downloadDatabase",
+        "title": "UniCloud: 下载数据库Schema"
+      },
+      {
+        "command": "unicloud-cli.uploadCommonModule",
+        "title": "UniCloud: 上传此公共模块"
+      },
+      {
+        "command": "unicloud-cli.runCloudFunction",
+        "title": "UniCloud: 本地运行云函数"
+      },
+      {
+        "command": "revealInExplorer",
+        "title": "在资源管理器中显示"
       }
     ],
     "menus": {
       "explorer/context": [
         {
-          "when": "explorerResourceIsFolder",
-          "command": "unicloud-cli.uploadCloudFunction",
+          "when": "explorerResourceIsFolder && resourceFilename =~ /^[^.].*/ && resourcePath =~ /.*[/\\\\]cloudfunctions[/\\\\][^/\\\\]+$/",
+          "command": "unicloud-cli.uploadSingleCloudFunction",
           "group": "unicloud"
         },
         {
-          "when": "explorerResourceIsFolder",
-          "command": "unicloud-cli.downloadCloudFunction",
+          "when": "explorerResourceIsFolder && resourceFilename =~ /^cloudfunctions$/",
+          "command": "unicloud-cli.uploadAllCloudFunctions",
           "group": "unicloud"
         },
         {
-          "when": "explorerResourceIsFolder",
+          "when": "explorerResourceIsFolder && resourceFilename =~ /^database$/",
+          "command": "unicloud-cli.uploadDatabase",
+          "group": "unicloud"
+        },
+        {
+          "when": "explorerResourceIsFolder && resourceFilename =~ /^[^.].*/ && resourcePath =~ /.*[/\\\\]cloudfunctions[/\\\\][^/\\\\]+$/",
+          "command": "unicloud-cli.downloadSingleCloudFunction",
+          "group": "unicloud"
+        },
+        {
+          "when": "explorerResourceIsFolder && resourceFilename =~ /^cloudfunctions$/",
+          "command": "unicloud-cli.downloadAllCloudFunctions",
+          "group": "unicloud"
+        },
+        {
+          "when": "explorerResourceIsFolder && resourceFilename =~ /^database$/",
+          "command": "unicloud-cli.downloadDatabase",
+          "group": "unicloud"
+        },
+        {
+          "when": "explorerResourceIsFolder && resourceFilename =~ /^[^.].*/ && resourcePath =~ /.*[/\\\\]cloudfunctions[/\\\\]common[/\\\\][^/\\\\]+$/",
+          "command": "unicloud-cli.uploadCommonModule",
+          "group": "unicloud"
+        },
+        {
+          "when": "resourceFilename =~ /.*\\.js$/ && resourcePath =~ /.*[/\\\\]cloudfunctions[/\\\\][^/\\\\]+[/\\\\]index\\.js$/",
+          "command": "unicloud-cli.runCloudFunction",
+          "group": "unicloud"
+        },
+        {
+          "when": "explorerResourceIsFolder && resourceFilename =~ /^uniCloud-(aliyun|tcb|alipay)$/",
           "command": "unicloud-cli.linkFolderToSpace",
           "group": "unicloud"
+        }
+      ],
+      "view/item/context": [
+        {
+          "command": "unicloud-cli.uploadAllCloudFunctions",
+          "when": "view == uniCloudSpaces",
+          "group": "inline"
+        },
+        {
+          "command": "unicloud-cli.downloadAllCloudFunctions",
+          "when": "view == uniCloudSpaces",
+          "group": "inline"
         }
       ],
       "commandPalette": [
@@ -102,6 +208,10 @@
         {
           "command": "unicloud-cli.configureCLIPath",
           "group": "unicloud"
+        },
+        {
+          "command": "revealInExplorer",
+          "when": "false"
         }
       ]
     }
