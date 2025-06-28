@@ -8,112 +8,6 @@ const util = require('util');
 const execPromise = util.promisify(exec);
 const iconv = require('iconv-lite'); // 注意：需要安装这个包
 
-// 关联的云空间文件夹路径列表
-let associatedCloudFolders = [];
-
-// 文件装饰提供器，用于修改文件图标
-class CloudSpaceDecorationProvider {
-	constructor() {
-		this._onDidChangeFileDecorations = new vscode.EventEmitter();
-		this.onDidChangeFileDecorations = this._onDidChangeFileDecorations.event;
-	}
-
-	provideFileDecoration(uri) {
-		// 检查是否是已关联的云空间文件夹
-		if (this.isAssociatedCloudFolder(uri.fsPath)) {
-			// 返回装饰，使用特殊图标和徽章
-			return {
-				badge: '✓', // 使用勾选符号作为徽章
-				color: new vscode.ThemeColor('charts.blue'), // 使用蓝色
-				tooltip: '已关联云空间'
-			};
-		}
-		return null;
-	}
-
-	isAssociatedCloudFolder(filePath) {
-		return associatedCloudFolders.some(folder => 
-			folder.toLowerCase() === filePath.toLowerCase());
-	}
-
-	// 更新装饰
-	updateDecorations() {
-		this._onDidChangeFileDecorations.fire(undefined); // 触发更新所有装饰
-	}
-}
-
-// 云空间树视图提供器
-class CloudSpaceTreeDataProvider {
-	constructor() {
-		this._onDidChangeTreeData = new vscode.EventEmitter();
-		this.onDidChangeTreeData = this._onDidChangeTreeData.event;
-	}
-
-	refresh() {
-		this._onDidChangeTreeData.fire(undefined);
-	}
-
-	getTreeItem(element) {
-		const uri = vscode.Uri.file(element);
-		const treeItem = new vscode.TreeItem(
-			uri,
-			vscode.TreeItemCollapsibleState.Collapsed
-		);
-		
-		// 设置标签为文件夹名称
-		treeItem.label = path.basename(element);
-		
-		// 设置图标
-		treeItem.iconPath = new vscode.ThemeIcon('cloud');
-		
-		// 设置上下文菜单
-		treeItem.contextValue = 'cloudSpaceFolder';
-		
-		// 设置工具提示
-		const provider = this.getProviderFromPath(element);
-		if (provider) {
-			treeItem.tooltip = `已关联的${provider.label}云空间`;
-			// 设置描述
-			treeItem.description = provider.label;
-		} else {
-			treeItem.tooltip = '已关联的云空间';
-		}
-		
-		// 设置命令，点击时打开文件夹
-		treeItem.command = {
-			command: 'revealInExplorer',
-			title: '在资源管理器中显示',
-			arguments: [uri]
-		};
-		
-		return treeItem;
-	}
-
-	getChildren(element) {
-		if (element) {
-			// 如果提供了元素，则返回该文件夹的子项
-			// 这里我们不显示子项，所以返回空数组
-			return [];
-		} else {
-			// 返回顶级项 - 关联的云空间文件夹
-			return associatedCloudFolders;
-		}
-	}
-	
-	// 从路径获取云服务商信息
-	getProviderFromPath(filePath) {
-		const folderName = path.basename(filePath);
-		if (folderName === 'uniCloud-aliyun') {
-			return { id: 'aliyun', label: '阿里云' };
-		} else if (folderName === 'uniCloud-tcb') {
-			return { id: 'tcb', label: '腾讯云' };
-		} else if (folderName === 'uniCloud-alipay') {
-			return { id: 'alipay', label: '支付宝' };
-		}
-		return null;
-	}
-}
-
 /**
  * 扩展 QuickPickItem 的自定义类型，添加 id 字段和其他可能需要的自定义属性
  * @typedef {Object} CustomQuickPickItem
@@ -193,41 +87,6 @@ function activate(context) {
 	// Use the console to output diagnostic information (console.log) and errors (console.error)
 	// This line of code will only be executed once when your extension is activated
 	log('扩展 "unicloud-cli" 已激活!', true);
-	
-	// 初始化文件装饰提供器
-	const cloudSpaceDecorationProvider = new CloudSpaceDecorationProvider();
-	context.subscriptions.push(
-		vscode.window.registerFileDecorationProvider(cloudSpaceDecorationProvider)
-	);
-	
-	// 初始化树视图提供器
-	const cloudSpaceTreeDataProvider = new CloudSpaceTreeDataProvider();
-	const treeView = vscode.window.createTreeView('uniCloudSpaces', {
-		treeDataProvider: cloudSpaceTreeDataProvider,
-		showCollapseAll: true
-	});
-	context.subscriptions.push(treeView);
-	
-	// 注册在资源管理器中显示文件的命令
-	context.subscriptions.push(
-		vscode.commands.registerCommand('revealInExplorer', (uri) => {
-			vscode.commands.executeCommand('revealInExplorer', uri);
-		})
-	);
-	
-	// 加载已关联的云空间文件夹
-	loadAssociatedCloudFolders();
-	
-	// 监听配置变化，更新关联的云空间文件夹
-	context.subscriptions.push(
-		vscode.workspace.onDidChangeConfiguration(e => {
-			if (e.affectsConfiguration('unicloud-cli.spaceAssociations')) {
-				loadAssociatedCloudFolders();
-				cloudSpaceDecorationProvider.updateDecorations();
-				cloudSpaceTreeDataProvider.refresh();
-			}
-		})
-	);
 	
 	// 检查CLI路径是否有效
 	async function checkCLIPath() {
@@ -1585,8 +1444,7 @@ function activate(context) {
 				spaceId: selectedSpace.id,
 				spaceName: selectedSpace.spaceName,
 				provider: selectedProvider.id,
-				projectName: selectedProject.name,  // 添加项目名称
-				folderPath: folderPath  // 保存文件夹路径
+				projectName: selectedProject.name  // 添加项目名称
 			};
 			
 			// 读取现有的云空间关联信息
@@ -1597,11 +1455,6 @@ function activate(context) {
 			
 			// 更新工作区设置
 			await config.update('spaceAssociations', spaceAssociations, vscode.ConfigurationTarget.Workspace);
-			
-			// 更新关联的云空间文件夹列表并刷新视图
-			loadAssociatedCloudFolders();
-			cloudSpaceDecorationProvider.updateDecorations();
-			cloudSpaceTreeDataProvider.refresh();
 			
 			log(`成功关联文件夹 "${folderPath}" 到云空间 "${selectedSpace.spaceName}"`, true);
 			vscode.window.showInformationMessage(`已成功将云空间 "${selectedSpace.spaceName}" 关联到当前工作区`);
@@ -1664,7 +1517,7 @@ function activate(context) {
 				description: '删除已有的云空间关联', 
 				actionType: 'delete' 
 			});
-		}
+						}
 		
 		// 显示关联信息和选项
 		const selectedItem = await vscode.window.showQuickPick(
@@ -1678,8 +1531,8 @@ function activate(context) {
 		if (!selectedItem) {
 			log('用户取消了云空间关联管理');
 			return;
-		}
-		
+			}
+			
 		// 处理选择的操作
 		if (selectedItem.actionType === 'add') {
 			// 添加新关联
@@ -1712,15 +1565,15 @@ function activate(context) {
 					// 获取当前配置
 					const config = vscode.workspace.getConfiguration('unicloud-cli');
 					const spaceAssociations = config.get('spaceAssociations') || {};
-					
+			
 					// 删除指定提供商的关联信息
 					delete spaceAssociations[providerToDelete.providerId];
 					
 					// 更新配置
 					await config.update('spaceAssociations', spaceAssociations, vscode.ConfigurationTarget.Workspace);
-					
+			
 					log(`已删除 ${providerToDelete.label} 的云空间关联`, true);
-				} catch (error) {
+		} catch (error) {
 					log(`删除云空间关联失败: ${error.message}`, true);
 					vscode.window.showErrorMessage(`删除云空间关联失败: ${error.message}`);
 				}
@@ -2721,29 +2574,6 @@ function activate(context) {
 	context.subscriptions.push(downloadDatabaseCmd);
 	context.subscriptions.push(uploadCommonModuleCmd);
 	context.subscriptions.push(runCloudFunctionCmd);
-}
-
-// 加载已关联的云空间文件夹
-function loadAssociatedCloudFolders() {
-	try {
-		const config = vscode.workspace.getConfiguration('unicloud-cli');
-		const spaceAssociations = config.get('spaceAssociations') || {};
-		
-		// 清空现有列表
-		associatedCloudFolders = [];
-		
-		// 添加所有关联的文件夹路径
-		for (const providerId in spaceAssociations) {
-			const spaceInfo = spaceAssociations[providerId];
-			if (spaceInfo.folderPath) {
-				associatedCloudFolders.push(spaceInfo.folderPath);
-			}
-		}
-		
-		log(`已加载 ${associatedCloudFolders.length} 个关联的云空间文件夹`);
-	} catch (error) {
-		log(`加载关联的云空间文件夹失败: ${error.message}`);
-	}
 }
 
 // This method is called when your extension is deactivated

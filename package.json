@@ -27,25 +27,6 @@
         }
       }
     },
-    "viewsContainers": {
-      "activitybar": [
-        {
-          "id": "unicloud-explorer",
-          "title": "UniCloud 云空间",
-          "icon": "$(cloud)"
-        }
-      ]
-    },
-    "views": {
-      "unicloud-explorer": [
-        {
-          "id": "uniCloudSpaces",
-          "name": "已关联云空间",
-          "icon": "$(cloud)",
-          "contextualTitle": "UniCloud 云空间"
-        }
-      ]
-    },
     "commands": [
       {
         "command": "unicloud-cli.helloWorld",
@@ -114,10 +95,6 @@
       {
         "command": "unicloud-cli.runCloudFunction",
         "title": "UniCloud: 本地运行云函数"
-      },
-      {
-        "command": "revealInExplorer",
-        "title": "在资源管理器中显示"
       }
     ],
     "menus": {
@@ -168,18 +145,6 @@
           "group": "unicloud"
         }
       ],
-      "view/item/context": [
-        {
-          "command": "unicloud-cli.uploadAllCloudFunctions",
-          "when": "view == uniCloudSpaces",
-          "group": "inline"
-        },
-        {
-          "command": "unicloud-cli.downloadAllCloudFunctions",
-          "when": "view == uniCloudSpaces",
-          "group": "inline"
-        }
-      ],
       "commandPalette": [
         {
           "command": "unicloud-cli.uploadCloudFunction",
@@ -208,10 +173,6 @@
         {
           "command": "unicloud-cli.configureCLIPath",
           "group": "unicloud"
-        },
-        {
-          "command": "revealInExplorer",
-          "when": "false"
         }
       ]
     }
