@@ -30,71 +30,83 @@
     "commands": [
       {
         "command": "unicloud-cli.helloWorld",
-        "title": "UniCloud: Hello World"
+        "title": "[UniCloud] Hello World"
       },
       {
         "command": "unicloud-cli.uploadCloudFunction",
-        "title": "UniCloud: 上传资源"
+        "title": "[UniCloud] 上传资源"
       },
       {
         "command": "unicloud-cli.downloadCloudFunction",
-        "title": "UniCloud: 下载资源"
+        "title": "[UniCloud] 下载资源"
       },
       {
         "command": "unicloud-cli.listResources",
-        "title": "UniCloud: 列举资源信息"
+        "title": "[UniCloud] 列举资源信息"
       },
       {
         "command": "unicloud-cli.initDatabase",
-        "title": "UniCloud: 初始化数据库"
+        "title": "[UniCloud] 初始化数据库"
       },
       {
         "command": "unicloud-cli.assignSpace",
-        "title": "UniCloud: 指定云空间"
+        "title": "[UniCloud] 指定云空间"
       },
       {
         "command": "unicloud-cli.linkFolderToSpace",
-        "title": "UniCloud: 关联文件夹到云空间"
+        "title": "[UniCloud] 关联文件夹到云空间"
       },
       {
         "command": "unicloud-cli.configureCLIPath",
-        "title": "UniCloud: 配置CLI路径"
+        "title": "[UniCloud] 配置CLI路径"
       },
       {
         "command": "unicloud-cli.manageSpaceAssociations",
-        "title": "UniCloud: 管理云空间关联"
+        "title": "[UniCloud] 管理云空间关联"
       },
       {
         "command": "unicloud-cli.uploadSingleCloudFunction",
-        "title": "UniCloud: 上传此云函数"
+        "title": "[UniCloud] 上传此云函数"
       },
       {
         "command": "unicloud-cli.uploadAllCloudFunctions",
-        "title": "UniCloud: 上传所有云函数"
+        "title": "[UniCloud] 上传所有云函数"
       },
       {
         "command": "unicloud-cli.uploadDatabase",
-        "title": "UniCloud: 上传数据库Schema"
+        "title": "[UniCloud] 上传数据库Schema"
+      },
+      {
+        "command": "unicloud-cli.uploadSingleSchema",
+        "title": "[UniCloud] 上传此Schema文件"
       },
       {
         "command": "unicloud-cli.downloadSingleCloudFunction",
-        "title": "UniCloud: 下载此云函数"
+        "title": "[UniCloud] 下载此云函数"
       },
       {
         "command": "unicloud-cli.downloadAllCloudFunctions",
-        "title": "UniCloud: 下载所有云函数"
+        "title": "[UniCloud] 下载所有云函数"
       },
       {
         "command": "unicloud-cli.downloadDatabase",
-        "title": "UniCloud: 下载数据库Schema"
+        "title": "[UniCloud] 下载数据库Schema"
       },
       {
         "command": "unicloud-cli.uploadCommonModule",
-        "title": "UniCloud: 上传此公共模块"
+        "title": "[UniCloud] 上传此公共模块"
       },
       {
         "command": "unicloud-cli.runCloudFunction",
-        "title": "UniCloud: 本地运行云函数"
+        "title": "[UniCloud] 本地运行云函数"
+      },
+      {
+        "command": "unicloud-cli.refreshFileDecoration",
+        "title": "[UniCloud] 刷新云空间文件标记"
+      },
+      {
+        "command": "unicloud-cli.downloadSingleSchema",
+        "title": "[UniCloud] 下载此Schema文件"
       }
     ],
     "menus": {
@@ -102,47 +114,57 @@
         {
           "when": "explorerResourceIsFolder && resourceFilename =~ /^[^.].*/ && resourcePath =~ /.*[/\\\\]cloudfunctions[/\\\\][^/\\\\]+$/",
           "command": "unicloud-cli.uploadSingleCloudFunction",
-          "group": "unicloud"
+          "group": "1_modification"
         },
         {
           "when": "explorerResourceIsFolder && resourceFilename =~ /^cloudfunctions$/",
           "command": "unicloud-cli.uploadAllCloudFunctions",
-          "group": "unicloud"
+          "group": "1_modification"
         },
         {
           "when": "explorerResourceIsFolder && resourceFilename =~ /^database$/",
           "command": "unicloud-cli.uploadDatabase",
-          "group": "unicloud"
+          "group": "1_modification"
+        },
+        {
+          "when": "!explorerResourceIsFolder && resourceFilename =~ /.*\\.schema\\.json$/ && resourcePath =~ /.*[/\\\\]database[/\\\\][^/\\\\]+\\.schema\\.json$/",
+          "command": "unicloud-cli.uploadSingleSchema",
+          "group": "1_modification"
+        },
+        {
+          "when": "!explorerResourceIsFolder && resourceFilename =~ /.*\\.schema\\.json$/ && resourcePath =~ /.*[/\\\\]database[/\\\\][^/\\\\]+\\.schema\\.json$/",
+          "command": "unicloud-cli.downloadSingleSchema",
+          "group": "1_modification"
         },
         {
           "when": "explorerResourceIsFolder && resourceFilename =~ /^[^.].*/ && resourcePath =~ /.*[/\\\\]cloudfunctions[/\\\\][^/\\\\]+$/",
           "command": "unicloud-cli.downloadSingleCloudFunction",
-          "group": "unicloud"
+          "group": "1_modification"
         },
         {
           "when": "explorerResourceIsFolder && resourceFilename =~ /^cloudfunctions$/",
           "command": "unicloud-cli.downloadAllCloudFunctions",
-          "group": "unicloud"
+          "group": "1_modification"
         },
         {
           "when": "explorerResourceIsFolder && resourceFilename =~ /^database$/",
           "command": "unicloud-cli.downloadDatabase",
-          "group": "unicloud"
+          "group": "1_modification"
         },
         {
           "when": "explorerResourceIsFolder && resourceFilename =~ /^[^.].*/ && resourcePath =~ /.*[/\\\\]cloudfunctions[/\\\\]common[/\\\\][^/\\\\]+$/",
           "command": "unicloud-cli.uploadCommonModule",
-          "group": "unicloud"
+          "group": "1_modification"
         },
         {
           "when": "resourceFilename =~ /.*\\.js$/ && resourcePath =~ /.*[/\\\\]cloudfunctions[/\\\\][^/\\\\]+[/\\\\]index\\.js$/",
           "command": "unicloud-cli.runCloudFunction",
-          "group": "unicloud"
+          "group": "1_modification"
         },
         {
           "when": "explorerResourceIsFolder && resourceFilename =~ /^uniCloud-(aliyun|tcb|alipay)$/",
           "command": "unicloud-cli.linkFolderToSpace",
-          "group": "unicloud"
+          "group": "1_modification"
         }
       ],
       "commandPalette": [
@@ -172,6 +194,10 @@
         },
         {
           "command": "unicloud-cli.configureCLIPath",
+          "group": "unicloud"
+        },
+        {
+          "command": "unicloud-cli.refreshFileDecoration",
           "group": "unicloud"
         }
       ]

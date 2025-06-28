@@ -3,10 +3,7 @@
 const vscode = require('vscode');
 const fs = require('fs');
 const path = require('path');
-const { exec } = require('child_process');
-const util = require('util');
-const execPromise = util.promisify(exec);
-const iconv = require('iconv-lite'); // 注意：需要安装这个包
+const iconv = require('iconv-lite'); 
 
 /**
  * 扩展 QuickPickItem 的自定义类型，添加 id 字段和其他可能需要的自定义属性
@@ -18,10 +15,123 @@ const iconv = require('iconv-lite'); // 注意：需要安装这个包
  * @property {boolean} [picked] - 是否被选中
  */
 
+// 从路径获取云服务商类型
+function getProviderTypeFromPath(filePath) {
+	if (filePath.includes('uniCloud-aliyun')) {
+		return 'aliyun';
+	} else if (filePath.includes('uniCloud-tcb')) {
+		return 'tcb';
+	} else if (filePath.includes('uniCloud-alipay')) {
+		return 'alipay';
+	}
+	return null;
+}
+
+// 云空间装饰器提供者实例，全局变量方便在不同函数中引用
+let cloudSpaceDecorationProvider;
+
+// 文件装饰器提供者，用于在文件资源管理器中显示云空间信息
+class CloudSpaceDecorationProvider {
+	constructor() {
+		this._onDidChangeFileDecorations = new vscode.EventEmitter();
+		this.onDidChangeFileDecorations = this._onDidChangeFileDecorations.event;
+	}
+	
+	/**
+	 * 刷新文件装饰
+	 */
+	refresh() {
+		this._onDidChangeFileDecorations.fire();
+	}
+	
+	/**
+	 * 提供文件装饰信息
+	 * @param {vscode.Uri} uri - 文件URI
+	 * @returns {vscode.FileDecoration|undefined} - 装饰信息
+	 */
+	provideFileDecoration(uri) {
+		// 检查是否为云空间文件夹
+		const filePath = uri.fsPath;
+		const fileName = path.basename(filePath);
+		
+		// 检查是否是云空间根目录
+		if (fileName.startsWith('uniCloud-')) {
+			const providerType = getProviderTypeFromPath(filePath);
+			if (!providerType) {
+				return undefined;
+			}
+			
+			// 获取云空间配置信息
+			const spaceConfig = getSpaceConfig(providerType);
+			if (!spaceConfig || !spaceConfig.spaceName) {
+				return undefined;
+			}
+			
+			// 构建装饰信息
+			const providerName = providerType === 'aliyun' ? '阿里云' : providerType === 'tcb' ? '腾讯云' : '支付宝';
+			
+			// 返回文件装饰
+			return {
+				tooltip: `【${providerName}:${spaceConfig.spaceName}】`,
+				badge: `☁️`, // 使用一个星形图标作为标记
+				color: new vscode.ThemeColor('terminal.ansiGreen'),  // 使用绿色更醒目
+			};
+		}
+		
+		// 检查是否是云空间的子文件夹（cloudfunctions、database、actions等）
+		const cloudRootDir = findCloudSpaceRootDir(filePath);
+		if (cloudRootDir) {
+			const isSpecialDir = ['cloudfunctions', 'database', 'actions'].includes(fileName);
+			if (isSpecialDir) {
+				const providerType = getProviderTypeFromPath(cloudRootDir);
+				if (!providerType) {
+					return undefined;
+				}
+				
+				// 获取云空间配置信息
+				const spaceConfig = getSpaceConfig(providerType);
+				if (!spaceConfig || !spaceConfig.spaceName) {
+					return undefined;
+				}
+				
+				// 构建装饰信息
+				const providerName = providerType === 'aliyun' ? '阿里云' : providerType === 'tcb' ? '腾讯云' : '支付宝';
+				const spaceTitle = `【${providerName}:${spaceConfig.spaceName}】`;
+				
+				// 返回文件装饰
+				return {
+					tooltip: spaceTitle,
+					badge: `✓`,  // 使用对勾图标
+					color: new vscode.ThemeColor('terminal.ansiGreen'),  // 使用绿色更醒目
+				};
+			}
+		}
+		
+		return undefined;
+	}
+}
+
 // 获取CLI路径
 function getCLIPath() {
 	const config = vscode.workspace.getConfiguration('unicloud-cli');
 	return config.get('cliPath');
+}
+
+// 检查路径所属的云空间主文件夹（返回目录路径）
+function findCloudSpaceRootDir(filePath) {
+	// 如果是云函数文件夹，向上查找
+	const pathParts = filePath.split(path.sep);
+	
+	// 查找uniCloud-aliyun或uniCloud-tcb或uniCloud-alipay目录
+	for (let i = pathParts.length - 1; i >= 0; i--) {
+		if (pathParts[i] === 'uniCloud-aliyun' || pathParts[i] === 'uniCloud-tcb' || pathParts[i] === 'uniCloud-alipay') {
+			// 找到云空间根目录，返回完整路径
+			return pathParts.slice(0, i + 1).join(path.sep);
+		}
+	}
+	
+	// 如果没找到，返回null
+	return null;
 }
 
 // 获取云空间配置
@@ -87,6 +197,38 @@ function activate(context) {
 	// Use the console to output diagnostic information (console.log) and errors (console.error)
 	// This line of code will only be executed once when your extension is activated
 	log('扩展 "unicloud-cli" 已激活!', true);
+	
+	// 注册文件装饰器提供者
+	cloudSpaceDecorationProvider = new CloudSpaceDecorationProvider();
+	context.subscriptions.push(
+		vscode.window.registerFileDecorationProvider(cloudSpaceDecorationProvider)
+	);
+	
+	// 监听配置变化，刷新装饰器
+	context.subscriptions.push(
+		vscode.workspace.onDidChangeConfiguration(event => {
+			if (event.affectsConfiguration('unicloud-cli.spaceAssociations')) {
+				log('检测到云空间配置变化，刷新文件装饰器');
+				cloudSpaceDecorationProvider.refresh();
+			}
+		})
+	);
+	
+	// 在插件激活时立即刷新装饰器
+	log('初始化文件装饰器');
+	// 立即刷新一次
+	cloudSpaceDecorationProvider.refresh();
+	
+	// 延迟多次刷新，确保装饰器显示
+	setTimeout(() => {
+		cloudSpaceDecorationProvider.refresh();
+		log('已刷新文件装饰器 (1)');
+	}, 1000);
+	
+	setTimeout(() => {
+		cloudSpaceDecorationProvider.refresh();
+		log('已刷新文件装饰器 (2)');
+	}, 3000);
 	
 	// 检查CLI路径是否有效
 	async function checkCLIPath() {
@@ -1456,6 +1598,12 @@ function activate(context) {
 			// 更新工作区设置
 			await config.update('spaceAssociations', spaceAssociations, vscode.ConfigurationTarget.Workspace);
 			
+			// 刷新文件装饰器，立即显示云空间关联标识
+			if (cloudSpaceDecorationProvider) {
+				log('关联云空间后刷新文件装饰器');
+				cloudSpaceDecorationProvider.refresh();
+			}
+			
 			log(`成功关联文件夹 "${folderPath}" 到云空间 "${selectedSpace.spaceName}"`, true);
 			vscode.window.showInformationMessage(`已成功将云空间 "${selectedSpace.spaceName}" 关联到当前工作区`);
 		} catch (error) {
@@ -1571,6 +1719,12 @@ function activate(context) {
 					
 					// 更新配置
 					await config.update('spaceAssociations', spaceAssociations, vscode.ConfigurationTarget.Workspace);
+					
+					// 刷新文件装饰器，立即更新显示
+					if (cloudSpaceDecorationProvider) {
+						log('删除云空间关联后刷新文件装饰器');
+						cloudSpaceDecorationProvider.refresh();
+					}
 			
 					log(`已删除 ${providerToDelete.label} 的云空间关联`, true);
 		} catch (error) {
@@ -2557,6 +2711,190 @@ function activate(context) {
 		};
 	}
 
+	// 手动刷新文件装饰器命令
+	const refreshDecorationCmd = vscode.commands.registerCommand('unicloud-cli.refreshFileDecoration', async function () {
+		log('手动刷新文件装饰器');
+		if (cloudSpaceDecorationProvider) {
+			cloudSpaceDecorationProvider.refresh();
+			vscode.window.showInformationMessage('已刷新云空间文件标记');
+		} else {
+			log('文件装饰器未初始化');
+		}
+	});
+	
+	// 上传单个Schema文件命令（右键菜单）
+	const uploadSingleSchemaCmd = vscode.commands.registerCommand('unicloud-cli.uploadSingleSchema', async function (uri) {
+		log('开始执行上传单个Schema文件命令（右键菜单）');
+		
+		// 检查工作区
+		if (!checkWorkspace()) {
+			log('未找到有效的工作区');
+			return;
+		}
+		
+		// 获取选中的文件路径
+		if (!uri || !uri.fsPath) {
+			log('未选择Schema文件');
+			return;
+		}
+		
+		const schemaFilePath = uri.fsPath;
+		const schemaFileName = path.basename(schemaFilePath);
+		log(`已选择Schema文件: ${schemaFileName}, 路径: ${schemaFilePath}`);
+		
+		// 查找数据库文件夹路径
+		const databaseDir = path.dirname(schemaFilePath);
+		log(`数据库目录: ${databaseDir}`);
+		
+		// 检查是否已关联云空间
+		if (!await checkSpaceAssociation(findCloudSpaceRoot(databaseDir))) {
+			log('未关联云空间，操作取消');
+			return;
+		}
+		
+		// 获取项目和提供商信息
+		const result = await getProjectAndProviderFromAssociation(databaseDir);
+		if (result.cancelled) {
+			return; // 用户取消了操作
+		}
+		
+		// 询问是否强制覆盖
+		/**
+		 * @type {Array<import('vscode').QuickPickItem & {value: boolean}>}
+		 */
+		const overrideOptions = [
+			{ label: '是', value: true, description: '强制覆盖现有资源' },
+			{ label: '否', value: false, description: '不强制覆盖' }
+		];
+		
+		const forceOverride = await vscode.window.showQuickPick(
+			overrideOptions,
+			{ placeHolder: '是否强制覆盖目标资源?' }
+		);
+
+		if (!forceOverride) {
+			log('用户取消了强制覆盖选择');
+			return;
+		}
+		
+		// 提取集合名称（去掉.schema.json后缀）
+		const collectionName = schemaFileName.replace(/\.schema\.json$/, '');
+		
+		// 构建上传命令 - 上传单个Schema文件时使用--name参数，需要完整文件名
+		let command = `cli cloud functions --upload db --prj "${result.projectName}" --provider ${result.provider?.id || ''} --name ${schemaFileName}`;
+		
+		// 如果需要强制覆盖
+		if (forceOverride.value) {
+			command += ' --force';
+		}
+		
+		// 执行上传命令
+		vscode.window.withProgress(
+			{
+				location: vscode.ProgressLocation.Notification,
+				title: `正在上传Schema文件 ${collectionName}...`,
+				cancellable: false
+			},
+			async (progress) => {
+				log(`开始执行上传命令: ${command}`);
+				const result = await executeCliCommand(command);
+				
+				if (result.success) {
+					log(`Schema文件 ${collectionName} 上传成功!`, true);
+				} else {
+					log(`上传失败: ${result.message}`, true);
+				}
+			}
+		);
+	});
+
+	// 下载单个Schema文件命令（右键菜单）
+	const downloadSingleSchemaCmd = vscode.commands.registerCommand('unicloud-cli.downloadSingleSchema', async function (uri) {
+		log('开始执行下载单个Schema文件命令（右键菜单）');
+		
+		// 检查工作区
+		if (!checkWorkspace()) {
+			log('未找到有效的工作区');
+			return;
+		}
+		
+		// 获取选中的文件路径
+		if (!uri || !uri.fsPath) {
+			log('未选择Schema文件');
+			return;
+		}
+		
+		const schemaFilePath = uri.fsPath;
+		const schemaFileName = path.basename(schemaFilePath);
+		log(`已选择Schema文件: ${schemaFileName}, 路径: ${schemaFilePath}`);
+		
+		// 查找数据库文件夹路径
+		const databaseDir = path.dirname(schemaFilePath);
+		log(`数据库目录: ${databaseDir}`);
+		
+		// 检查是否已关联云空间
+		if (!await checkSpaceAssociation(findCloudSpaceRoot(databaseDir))) {
+			log('未关联云空间，操作取消');
+			return;
+		}
+		
+		// 获取项目和提供商信息
+		const result = await getProjectAndProviderFromAssociation(databaseDir);
+		if (result.cancelled) {
+			return; // 用户取消了操作
+		}
+		
+		// 询问是否强制覆盖
+		/**
+		 * @type {Array<import('vscode').QuickPickItem & {value: boolean}>}
+		 */
+		const overrideOptions = [
+			{ label: '是', value: true, description: '强制覆盖本地资源' },
+			{ label: '否', value: false, description: '不强制覆盖' }
+		];
+		
+		const forceOverride = await vscode.window.showQuickPick(
+			overrideOptions,
+			{ placeHolder: '是否强制覆盖本地资源?' }
+		);
+
+		if (!forceOverride) {
+			log('用户取消了强制覆盖选择');
+			return;
+		}
+		
+		// 提取集合名称（去掉.schema.json后缀）
+		const collectionName = schemaFileName.replace(/\.schema\.json$/, '');
+		
+		// 构建下载命令 - 下载单个Schema文件，需要完整文件名
+		let command = `cli cloud functions --download db --prj "${result.projectName}" --provider ${result.provider?.id || ''} --name ${schemaFileName}`;
+		
+		// 如果需要强制覆盖
+		if (forceOverride.value) {
+			command += ' --force';
+		}
+		
+		// 执行下载命令
+		vscode.window.withProgress(
+			{
+				location: vscode.ProgressLocation.Notification,
+				title: `正在下载Schema文件 ${schemaFileName}...`,
+				cancellable: false
+			},
+			async (progress) => {
+				log(`开始执行下载命令: ${command}`);
+				const result = await executeCliCommand(command);
+				
+				if (result.success) {
+					log(`Schema文件 ${schemaFileName} 下载成功!`, true);
+				} else {
+					log(`下载失败: ${result.message}`, true);
+				}
+			}
+		);
+	});
+
+	// ... 添加到上下文的订阅列表
 	context.subscriptions.push(disposable);
 	context.subscriptions.push(uploadFunctionCmd);
 	context.subscriptions.push(downloadFunctionCmd);
@@ -2574,6 +2912,9 @@ function activate(context) {
 	context.subscriptions.push(downloadDatabaseCmd);
 	context.subscriptions.push(uploadCommonModuleCmd);
 	context.subscriptions.push(runCloudFunctionCmd);
+	context.subscriptions.push(refreshDecorationCmd);
+	context.subscriptions.push(uploadSingleSchemaCmd);
+	context.subscriptions.push(downloadSingleSchemaCmd);
 }
 
 // This method is called when your extension is deactivated
