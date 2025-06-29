@@ -2,7 +2,13 @@
   "name": "unicloud-cli",
   "displayName": "unicloud cli",
   "description": "unicloud cli工具 vscode中实现云函数的上传删除 修改等",
-  "version": "0.0.1",
+  "version": "1.0.2",
+  "publisher": "yichen11818",
+  "icon": "images/image.png",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/yichen11818/unicloud-cli.git"
+  },
   "engines": {
     "vscode": "^1.101.0"
   },
